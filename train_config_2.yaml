@@ -23,8 +23,8 @@ model:
 
 # Training Configuration - Optimized for smaller dataset
 training:
-  max_iterations: 40000       # Reduced for smaller dataset
-  warmup_iterations: 4000     # Proportionally reduced
+  max_iterations: 10000       # Reduced for smaller dataset
+  warmup_iterations: 1000     # Proportionally reduced
   learning_rate: 0.001       # Paper learning rate
   weight_decay: 0.0001
   batch_size: 1               # Slightly smaller batch
@@ -56,16 +56,16 @@ augmentation:
 
 # Data Configuration - Optimized for your 31+4 dataset
 data:
-  input_size: [64, 64, 64] #[128, 128, 128]
+  input_size: [57, 57, 64] #[128, 128, 128]
   target_spacing: [1.5, 1.0, 1.0]  # High resolution spacing
   normalize_intensity: true
   clip_intensity: [-1000, 1000]
-  max_train_cases: 25         # Use 25 of your 31 training cases
-  max_val_cases: 4            # Use all 4 test cases for validation
+  max_train_cases: 192         # Use 25 of your 31 training cases
+  max_val_cases: 48            # Use all 4 test cases for validation
   image_type: 'img_fin'
   mask_type: 'gt_fin'
   # Episodic training settings - adapted for smaller dataset
-  episode_length: 40000         # Slightly shorter episodes
+  episode_length: 10000         # Slightly shorter episodes
   max_classes_per_episode: 3
   support_query_split: 0.5
   n_way: 3
@@ -78,7 +78,7 @@ data:
 
 # Evaluation Configuration - More frequent for small dataset
 evaluation:
-  eval_interval: 40000          # More frequent evaluation
+  eval_interval: 10000          # More frequent evaluation
   metrics: ['dice', 'iou', 'hausdorff']
   save_predictions: true
 

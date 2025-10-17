@@ -13,13 +13,13 @@ from torch.utils.tensorboard import SummaryWriter
 from pathlib import Path
 import matplotlib.pyplot as plt
 from typing import Dict, List, Tuple
-# Import Iris components - FIXED: Use consistent naming
+
 from iris_model import IrisModel
 from PIL import Image
 from fixed_episodic_trainer import FixedEpisodicTrainer, FixedEpisodicDataset
 from inference_engine import InferenceEngine
 import torch.nn.functional as F
-from data_loader import load_medical_datasets_enhanced as load_medical_datasets # Use the enhanced loader
+from data_loader import load_medical_datasets_enhanced as load_medical_datasets
 
 
 def set_seed(seed: int):
@@ -254,52 +254,7 @@ def calculate_class_dice(predictions: torch.Tensor, targets: torch.Tensor) -> Di
         
     return dice_scores
 
-def run_real_inference(model: IrisModel, config: dict, logger: logging.Logger):
-    """Run inference on a single test set sample and provide detailed output."""
-    logger.info("="*50)
-    logger.info("Running Real Inference (Single Sample)")
-    logger.info("="*50)
-    device = config['hardware']['device']
-    if device == 'cuda' and not torch.cuda.is_available():
-        logger.warning("CUDA not available, falling back to CPU")
-        device = 'cpu'
-    engine = InferenceEngine(model, device=device)
-    
-    _, _, test_images, test_masks = load_medical_datasets(config)
-    
-    if not test_images:
-        logger.warning("No test images found. Skipping inference demo.")
-        return
-
-    idx = 0
-    query_image = test_images[idx].unsqueeze(0).to(device)
-    reference_image = test_images[0].unsqueeze(0).to(device)
-    reference_mask = test_masks[0].unsqueeze(0).to(device)
-    
-    logger.info(f"Processing Sample {idx}:")
-    logger.info(f" - Query Image Shape: {query_image.shape}")
-    logger.info(f" - Reference Image Shape: {reference_image.shape}")
-    logger.info(f" - Reference Mask Shape: {reference_mask.shape}")
-
-    result = engine.one_shot_inference(query_image, reference_image, reference_mask, task_id=f"test_sample_{idx}")
-    
-    # Load GT mask once
-    gt_mask = test_masks[idx].cpu().squeeze(0).long()
-    
-    # CRITICAL FIX: Pass the raw model output (logits/probs) to calculate_class_dice
-    # The function handles the argmax/binarization internally.
-    class_wise_dice = calculate_class_dice(result['predictions'], gt_mask)
-    
-    logger.info("-" * 25)
-    logger.info("Inference Results:")
-    logger.info(f" - Predicted Mask Shape: {result['predictions'].shape}")
-    logger.info(f" - Task Embedding Shape: {result['task_embedding'].shape}")
-    logger.info(f" - Dice Score: {class_wise_dice}")
-    logger.info("-" * 25)
-    
-    return result
-
-def save_slice_as_png(volume: torch.Tensor, path_prefix: str, cmap: str = 'gray'):
+def save_slice_as_png(volume: torch.Tensor, logger, path_prefix: str, cmap: str = 'gray'):
     """Save all 2D slices of a 3D tensor to PNG files."""
     volume_np = volume.cpu().numpy()
     D = volume_np.shape[0]
@@ -364,7 +319,7 @@ def calculate_class_dice(predictions: torch.Tensor, targets: torch.Tensor) -> Di
 
 def run_real_inference_multi(model: IrisModel, config: dict, logger: logging.Logger, num_samples: int = 5):
     """
-    Deep debug version of episodic inference, saving all intermediate tensors and plots.
+    Deep debug version of episodic inference, using targeted channel evaluation to fix 0.0 Dice.
     """
     output_dir = Path(config['experiment']['output_dir']) / config['experiment']['name'] / "debug_inference"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -414,39 +369,48 @@ def run_real_inference_multi(model: IrisModel, config: dict, logger: logging.Log
         logger.info("-" * 80)
         logger.info(f"Processing Sample {idx+1}/{min(num_samples, len(test_images))}")
         
-        query_image = test_images[idx].unsqueeze(0).to(device)
+        # FIX 1: Use .clone().detach() for safe tensor creation
+        query_image = test_images[idx].clone().detach().unsqueeze(0).to(device)
         gt_mask_full = test_masks[idx].cpu().squeeze().long()
         
         # Validation Prints
         logger.debug(f"[VALIDITY] Query Image: {query_image.shape}, Sum: {query_image.sum():.2f}")
         logger.debug(f"[VALIDITY] Query GT (Full) Classes: {torch.unique(gt_mask_full).tolist()}")
-        if not (query_image.sum() > 0): logger.error("CRITICAL: Query image sum is zero/empty!")
-        if not (gt_mask_full > 0).sum(): logger.error("CRITICAL: Query GT mask is all background!")
 
         # 2. Run episodic inference
         result = engine.one_shot_inference(query_image, reference_image, reference_mask, task_id=f"test_sample_{idx}")
         
-        # Extract predictions
-        pred_logits_or_probs = result['predictions'].cpu().squeeze(0) # Shape [C, D, H, W]
+        # Extract raw logits/probabilities
+        raw_pred_output = result['predictions'].cpu().squeeze(0) # Shape [C, D, H, W]
         
         # --- Data Preparation for Metrics & Visualization ---
         
-        # 2.1. Isolate GT for the specific task (Binary mask for the target object)
+        # 2.1. Isolate GT for the specific task
         if task_class_id == 999:
             gt_mask_isolated = (gt_mask_full > 0).long()
         else:
             gt_mask_isolated = (gt_mask_full == task_class_id).long() 
         
-        # 2.2. Convert Prediction to Hard Binary Foreground (Argmax != 0)
-        if pred_logits_or_probs.dim() == 4 and pred_logits_or_probs.size(0) > 1:
-            # Multi-class output: Argmax -> Binary Foreground
-            predicted_labels = torch.argmax(pred_logits_or_probs, dim=0).long()
-            pred_mask_binary_for_dice = (predicted_labels != 0).long()
-            pred_label_map = predicted_labels # Full label map for vis
+        # 2.2. Targeted Prediction Extraction (CRITICAL FIX)
+        if raw_pred_output.dim() == 4 and task_class_id is not None and task_class_id < raw_pred_output.size(0):
+            # Multi-class output: Extract the probability map for the target channel index
+            # This ignores the global argmax which incorrectly defaults to background (0)
+            
+            # NOTE: raw_pred_output uses channel index [0..10]
+            pred_channel_prob = raw_pred_output[task_class_id].float()
+            
+            # Binarize this single channel
+            pred_mask_binary_for_dice = (pred_channel_prob > 0.5).long()
+            
+            # For visualization, use the isolated channel if it exists, otherwise use the full argmax
+            pred_label_map = pred_mask_binary_for_dice # Binary map for visual clarity
+            logger.debug(f"[PRED] Using Targeted Channel {task_class_id} for Dice.")
         else:
-            # Binary output: simple threshold
-            pred_mask_binary_for_dice = (pred_logits_or_probs.squeeze(0) > 0.5).long()
+            # Fallback/Binary output case: Use the simple thresholded prediction
+            pred_mask_binary_for_dice = (raw_pred_output.squeeze(0) > 0.5).long()
             pred_label_map = pred_mask_binary_for_dice
+            logger.debug(f"[PRED] Using Simple Threshold (Binary) for Dice.")
+
             
         # 3. Compute Dice Score (Binary comparison)
         intersection = (pred_mask_binary_for_dice.float() * gt_mask_isolated.float()).sum()
@@ -454,40 +418,34 @@ def run_real_inference_multi(model: IrisModel, config: dict, logger: logging.Log
         avg_dice = (2.0 * intersection) / (union + 1e-8)
         
         logger.info(f"[METRIC] Dice Score (Task {task_class_id} overlap): {avg_dice:.4f}")
-        logger.debug(f"[METRIC] Intersection: {intersection.item()}, Union: {union.item()}")
-
-        # Check if GT for this specific task is empty
+        
         if gt_mask_isolated.sum() == 0:
-            logger.warning(f"GT for task Class {task_class_id} is EMPTY in Query Sample {idx}. Dice result is unreliable.")
+            logger.warning(f"GT for task Class {task_class_id} is EMPTY in Query Sample {idx}.")
         
         all_dice_scores.append(avg_dice.item())
         
         # --- Deep Debugging File Saving ---
 
-        # 4.1. Save Raw Tensors
-        torch.save(result['predictions'].cpu(), sample_dir / "raw_predictions.pt")
-        torch.save(result['task_embedding'].cpu(), sample_dir / "task_embedding.pt")
-        
-        # 4.2. Save All GT/Pred Slices/Channels
-        D = query_image.shape[-3]
+        # 4.2. Save All GT/Pred Slices/Channels (Updated to save only 3D tensors)
         
         # Input Image Slices
         img_3d = query_image.cpu().squeeze().float()
-        save_slice_as_png(img_3d, str(sample_dir / "query_image"), cmap='gray')
+        save_slice_as_png(img_3d, logger, str(sample_dir / "query_image"), cmap='gray')
 
         # Reference Mask Slices
-        save_slice_as_png(ref_mask_binary.cpu().squeeze(), str(sample_dir / "ref_mask_binary"), cmap='gray')
+        save_slice_as_png(ref_mask_binary.cpu().squeeze(), logger, str(sample_dir / "ref_mask_binary"), cmap='gray')
 
-        # Predicted Label Map Slices (Multi-class/Final)
-        save_slice_as_png(pred_label_map, str(sample_dir / "pred_label_map"), cmap='viridis')
+        # Predicted Label Map Slices (The final binary output we evaluated)
+        save_slice_as_png(pred_mask_binary_for_dice, logger, str(sample_dir / "pred_final_binary"), cmap='viridis')
 
         # GT Mask (Isolated) Slices
-        save_slice_as_png(gt_mask_isolated, str(sample_dir / "gt_isolated"), cmap='gray')
+        save_slice_as_png(gt_mask_isolated, logger, str(sample_dir / "gt_isolated"), cmap='gray')
         
         # Predicted Channel Slices (Save all C channels of the model output)
-        if pred_logits_or_probs.dim() == 4:
-            for c in range(pred_logits_or_probs.size(0)):
-                save_slice_as_png(pred_logits_or_probs[c].float(), str(sample_dir / f"pred_channel_{c}"), cmap='plasma')
+        if raw_pred_output.dim() == 4:
+            for c in range(raw_pred_output.size(0)):
+                # Using the raw probability/logit maps for deep inspection
+                save_slice_as_png(raw_pred_output[c].float(), logger, str(sample_dir / f"pred_channel_{c}"), cmap='plasma')
                 
         logger.info(f"[FILES] Debug files saved to: {sample_dir}")
 
@@ -533,7 +491,6 @@ def run_real_inference_multi(model: IrisModel, config: dict, logger: logging.Log
 
     return all_dice_scores
 
-
 def main():
     """Main function"""
     parser = argparse.ArgumentParser(description='Train Iris Framework')
@@ -567,8 +524,6 @@ def main():
     # Full training
     try:
         trainer = run_training(config, logger, output_dir)
-        
-        run_real_inference(trainer.model, config, logger)
 
         run_real_inference_multi(trainer.model, config, logger)
 

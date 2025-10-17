@@ -1,0 +1,12 @@
+nohup: ignoring input
+--2025-10-18 01:17:57--  https://zenodo.org/record/7155725/files/amos22.zip
+Resolving zenodo.org (zenodo.org)... 188.185.45.92, 188.185.43.25, 188.185.48.194, ...
+Connecting to zenodo.org (zenodo.org)|188.185.45.92|:443... connected.
+HTTP request sent, awaiting response... 301 MOVED PERMANENTLY
+Location: /records/7155725/files/amos22.zip [following]
+--2025-10-18 01:17:57--  https://zenodo.org/records/7155725/files/amos22.zip
+Reusing existing connection to zenodo.org:443.
+HTTP request sent, awaiting response... 416 REQUESTED_RANGE_NOT_SATISFIABLE
+
+    The file is already fully retrieved; nothing to do.
+

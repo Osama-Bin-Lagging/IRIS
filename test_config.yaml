@@ -1,0 +1,114 @@
+# ===================================================================
+# IRIS TESTING CONFIGURATION (config_test.yaml)
+# Fast testing with minimal resources for debugging and validation
+# ===================================================================
+
+# Model Configuration - Smaller for testing
+model:
+  in_channels: 1
+  base_channels: 16  # Reduced from 32
+  embed_dim: 256     # Reduced from 512
+  num_query_tokens: 4  # Reduced from 8
+  num_classes: 1
+  num_heads: 4       # Reduced from 8
+  num_blocks_per_stage: 1  # Reduced from 2
+  dropout: 0.1
+  deep_supervision: false  # Disabled for faster testing
+  multi_scale: false
+  task_encoding:
+    use_pixel_shuffle: true
+    downsample_factor: 2
+    high_res_encoding: false  # Disabled for speed
+
+# Training Configuration - Fast testing
+training:
+  max_iterations: 1000      # Very quick testing
+  warmup_iterations: 100    # Minimal warmup
+  learning_rate: 0.001      # Slightly lower for stability
+  weight_decay: 0.0001
+  batch_size: 2             # Small batch for memory
+  warmup_strategy: 'linear' # Simpler warmup
+  scheduler:
+    type: 'step'            # Simpler scheduler
+    step_size: 300
+    gamma: 0.8
+  gradient_clipping:
+    max_norm: 1.0
+  memory_bank:
+    ema_momentum: 0.95      # Lower momentum for faster adaptation
+    max_classes: 50         # Very small memory bank
+
+# Loss configuration - Simplified
+loss:
+  dice_weight: 1.0
+  ce_weight: 1.0
+  deep_supervision_weights: [1.0]  # Single weight since deep_supervision is off
+
+# Data augmentation - Minimal for testing
+augmentation:
+  random_crop: false        # Disabled for consistent testing
+  random_flip: false        # Disabled for speed
+  random_rotation: false    # Disabled for speed
+  intensity_shift: false    # Disabled for speed
+  gaussian_noise: 0.0       # No noise
+  elastic_deformation: false # Disabled for speed
+
+# Data Configuration - Small and fast with your data limits
+data:
+  input_size: [64, 64, 64]  # Much smaller for fast testing
+  target_spacing: [2.0, 2.0, 2.0]  # Lower resolution for speed
+  normalize_intensity: true
+  clip_intensity: [-1000, 1000]
+  max_train_cases: 3        # Use only 3 cases for quick testing
+  max_val_cases: 1          # Just 1 validation case
+  image_type: 'img_fin'
+  mask_type: 'gt_fin'
+  # Episodic training settings
+  episode_length: 50        # Very short episodes
+  max_classes_per_episode: 2
+  support_query_split: 0.5
+  n_way: 2
+  k_shot: 1
+  q_query: 1
+  # Enhanced preprocessing - Minimal for speed
+  normalization_method: 'minmax'  # Fastest normalization
+  apply_clahe: false        # Disabled for speed
+  gaussian_smooth: 0.0      # No smoothing
+
+# Evaluation Configuration - Frequent for monitoring
+evaluation:
+  eval_interval: 200        # More frequent evaluation
+  metrics: ['dice']         # Single metric for speed
+  save_predictions: false   # Disabled to save disk space
+
+# Inference Configuration
+inference:
+  strategies:
+    one_shot:
+      threshold: 0.5
+      apply_sigmoid: true
+      cache_embeddings: true
+
+# Hardware Configuration - Conservative
+hardware:
+  device: 'cuda:0'          # Use primary GPU
+  num_workers: 2            # Fewer workers
+  pin_memory: false         # Disabled to save memory
+  mixed_precision: false    # Disabled for debugging
+  gradient_checkpointing: false
+
+# Logging and Checkpointing - Frequent
+logging:
+  log_level: 'DEBUG'        # Verbose logging for debugging
+  log_interval: 50          # Frequent logging
+  tensorboard: true
+  save_interval: 500        # Frequent saves
+  keep_checkpoints: 2       # Keep fewer checkpoints
+
+# Experiment Configuration
+experiment:
+  name: 'iris_test_run'
+  description: 'Fast testing configuration for IRIS debugging'
+  output_dir: 'outputs/test'
+  resume_from: null
+  seed: 42

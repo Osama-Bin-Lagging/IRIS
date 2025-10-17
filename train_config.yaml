@@ -1,0 +1,136 @@
+
+# ===================================================================
+# IRIS TRAINING CONFIGURATION (config_train.yaml)
+# Full training configuration for production runs
+# ===================================================================
+
+# Model Configuration - Full size
+model:
+  in_channels: 1
+  base_channels: 24
+  embed_dim: 192
+  num_query_tokens: 6
+  num_classes: 11
+  num_heads: 8
+  num_blocks_per_stage: 2
+  dropout: 0.1
+  deep_supervision: false
+  multi_scale: true
+  task_encoding:
+    use_pixel_shuffle: true
+    downsample_factor: 2
+    high_res_encoding: true
+
+# Training Configuration - Optimized for smaller dataset
+training:
+  max_iterations: 40000       # Reduced for smaller dataset
+  warmup_iterations: 4000     # Proportionally reduced
+  learning_rate: 0.001       # Paper learning rate
+  weight_decay: 0.0001
+  batch_size: 1               # Slightly smaller batch
+  warmup_strategy: 'cosine'
+  scheduler:
+    type: 'exponential'
+    gamma: 0.97               # Slower decay for fewer iterations
+    step_interval: 1000
+  gradient_clipping:
+    max_norm: 1.0
+  memory_bank:
+    ema_momentum: 0.95       # Paper value
+    max_classes: 100          # Smaller memory bank for dataset size
+
+# Loss configuration - Full deep supervision
+loss:
+  dice_weight: 1.0
+  ce_weight: 1.0
+  deep_supervision_weights: [1.0, 0.8, 0.6, 0.4, 0.2]
+
+# Data augmentation - Full augmentation
+augmentation:
+  random_crop: true
+  random_flip: true
+  random_rotation: true
+  intensity_shift: true
+  gaussian_noise: 0.1
+  elastic_deformation: true
+
+# Data Configuration - Optimized for your 31+4 dataset
+data:
+  input_size: [64, 64, 64] #[128, 128, 128]
+  target_spacing: [1.5, 1.0, 1.0]  # High resolution spacing
+  normalize_intensity: true
+  clip_intensity: [-1000, 1000]
+  max_train_cases: 25         # Use 25 of your 31 training cases
+  max_val_cases: 4            # Use all 4 test cases for validation
+  image_type: 'img_fin'
+  mask_type: 'gt_fin'
+  # Episodic training settings - adapted for smaller dataset
+  episode_length: 40000         # Slightly shorter episodes
+  max_classes_per_episode: 3
+  support_query_split: 0.5
+  n_way: 3
+  k_shot: 2
+  q_query: 2
+  # Enhanced preprocessing - Full pipeline
+  normalization_method: 'robust'  # Best for medical images
+  apply_clahe: true
+  gaussian_smooth: 0.5
+
+# Evaluation Configuration - More frequent for small dataset
+evaluation:
+  eval_interval: 10000          # More frequent evaluation
+  metrics: ['dice', 'iou', 'hausdorff']
+  save_predictions: true
+
+# Inference Configuration - Full strategies
+inference:
+  strategies:
+    one_shot:
+      threshold: 0.5
+      apply_sigmoid: true
+      cache_embeddings: true
+    ensemble:
+      method: 'mean'
+      weights: null
+    retrieval:
+      k_retrievals: 3         # Reduced for smaller dataset
+      similarity_metric: 'cosine'
+    tuning:
+      steps: 10
+      learning_rate: 0.001
+
+# Hardware Configuration - Single GPU optimized
+hardware:
+  device: 'cuda'
+  num_workers: 4              # Reasonable for small dataset
+  pin_memory: true
+  mixed_precision: true       # Enable for memory efficiency
+  gradient_checkpointing: false # Disable for speed with small model
+
+# Logging and Checkpointing
+logging:
+  log_level: 'INFO'
+  log_interval: 100
+  tensorboard: true
+  save_interval: 10000         # More frequent saves
+  keep_checkpoints: 5
+
+# Dataset paths - Updated for your data structure
+datasets:
+  train_datasets:
+    - name: 'AUTO_SEG_TRAIN'
+      path: '../AUTO_SEGMENTATION_TRAIN'
+      cases: 31
+  val_datasets:
+    - name: 'AUTO_SEG_TEST'
+      path: '../AUTO_SEGMENTATION_TEST'
+      cases: 4
+
+# Experiment Configuration
+experiment:
+  name: 'iris_universal_segmentation'
+  description: 'IRIS training on 31 cases with 4 test cases for validation'
+  output_dir: 'outputs/training'
+  resume_from: null
+  seed: 42
+
